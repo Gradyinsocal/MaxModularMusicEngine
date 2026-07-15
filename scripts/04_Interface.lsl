@@ -1,68 +1,42 @@
+
 ///////////////////////////////////////////////////////////////
 //
-// Max Modular Music Engine
+// MMME - Max Modular Music Engine
 //
-// File:
-// 04_Interface.lsl
-//
-// Version:
-// 1.01
-//
-// Build:
-// 3B Developer Preview 2
+// File: 04_Interface.lsl
+// Version: 1.01
+// Build: 3B.2 Stability Fix
 //
 ///////////////////////////////////////////////////////////////
 
+integer API_ENGINE_PLAY   = 2100;
+integer API_ENGINE_STOP   = 2101;
+integer API_ENGINE_PAUSE  = 2102;
+integer API_ENGINE_RESUME = 2103;
 
-//==============================================================
-// API
-//==============================================================
+integer API_DB_REQUEST = 2000;
+integer API_DB_REPLY   = 2001;
 
-// Playback Engine
-
-integer API_ENGINE_PLAY      = 2100;
-integer API_ENGINE_STOP      = 2101;
-
-
-// Library
-
-integer API_DB_REQUEST       = 2000;
-integer API_DB_REPLY         = 2001;
-
-
-// Interface
-
-integer API_IF_STATE         = 3000;
-integer API_IF_NOWPLAYING    = 3001;
-
-
-//==============================================================
-// Library Commands
-//==============================================================
+integer API_IF_STATE      = 3000;
+integer API_IF_NOWPLAYING = 3001;
 
 string CMD_LIST_SONGS = "LIST_SONGS";
 string CMD_SONG_COUNT = "SONG_COUNT";
 
+integer STATE_STOPPED = 0;
+integer STATE_PLAYING = 1;
+integer STATE_PAUSED  = 2;
 
-//==============================================================
-// Dialog Buttons
-//==============================================================
-
-string BTN_PLAY   = "▶ Play";
-string BTN_STOP   = "■ Stop";
-string BTN_SONGS  = "🎵 Songs";
-string BTN_VOLUME = "🔊 Volume";
-
-string BTN_BACK   = "Back";
-string BTN_CLOSE  = "Close";
-
-string BTN_NEXT   = "Next ▶";
-string BTN_PREV   = "◀ Prev";
-
-
-//==============================================================
-// Menu States
-//==============================================================
+string BTN_PLAY     = "▶ Play";
+string BTN_PAUSE    = "⏸ Pause";
+string BTN_CONTINUE = "▶ Continue";
+string BTN_STOP     = "■ Stop";
+string BTN_SONGS    = "🎵 Songs";
+string BTN_VOLUME   = "🔊 Volume";
+string BTN_BACK     = "Back";
+string BTN_CLOSE    = "Close";
+string BTN_NEXT     = "Next ▶";
+string BTN_PREV     = "◀ Prev";
 
 integer MENU_MAIN   = 0;
 integer MENU_SONGS  = 1;
@@ -70,52 +44,24 @@ integer MENU_VOLUME = 2;
 
 integer gMenu = MENU_MAIN;
 
+integer gChannel = 0;
+integer gListen = 0;
 
-//==============================================================
-// Dialog
-//==============================================================
-
-integer gChannel;
-integer gListen;
-
-
-//==============================================================
-// Playback Status
-//==============================================================
-
-integer gState = 0;
+integer gState = STATE_STOPPED;
 
 string gSong = "No Song";
 string gArtist = "";
 
-
-//==============================================================
-// Song Cache
-//
-// Current Library Format:
-//
-// SongID
-// Song Title
-//
-// Each song occupies TWO entries.
-//
-// Record Size = 2
-//==============================================================
-
 integer SONG_RECORD = 2;
+integer BUTTONS_PER_PAGE = 9;
 
 list gLibrary = [];
 
 integer gSongCount = 0;
-
 integer gSongPage = 0;
 
-integer BUTTONS_PER_PAGE = 9;
-
-
-//==============================================================
-// Library Helper Functions
-//==============================================================
+key gActiveUser = NULL_KEY;
+integer gRefreshMainOnState = FALSE;
 
 integer SongOffset(integer song)
 {
@@ -124,43 +70,35 @@ integer SongOffset(integer song)
 
 string SongID(integer song)
 {
-    return llList2String(
-        gLibrary,
-        SongOffset(song));
+    return llList2String(gLibrary, SongOffset(song));
 }
 
 string SongTitle(integer song)
 {
-    return llList2String(
-        gLibrary,
-        SongOffset(song) + 1);
+    return llList2String(gLibrary, SongOffset(song) + 1);
 }
-
-
-//==============================================================
-// Dialog Support
-//==============================================================
 
 OpenDialog(key id)
 {
     if(gListen)
         llListenRemove(gListen);
 
-    gChannel =
-        -1 - (integer)llFrand(2000000000.0);
-
-    gListen =
-        llListen(
-            gChannel,
-            "",
-            id,
-            "");
+    gActiveUser = id;
+    gChannel = -1 - (integer)llFrand(2000000000.0);
+    gListen = llListen(gChannel, "", id, "");
 }
 
+CloseDialog()
+{
+    if(gListen)
+    {
+        llListenRemove(gListen);
+        gListen = 0;
+    }
 
-//==============================================================
-// Library Requests
-//==============================================================
+    gActiveUser = NULL_KEY;
+    gRefreshMainOnState = FALSE;
+}
 
 RequestSongList()
 {
@@ -179,98 +117,82 @@ RequestSongCount()
         CMD_SONG_COUNT,
         NULL_KEY);
 }
-//==============================================================
-// MAIN MENU
-//==============================================================
 
 ShowMain(key id)
 {
     gMenu = MENU_MAIN;
-
     OpenDialog(id);
 
-    list buttons =
-    [
-        BTN_PLAY,
-        BTN_STOP,
-        BTN_SONGS,
-        BTN_VOLUME,
-        BTN_CLOSE
-    ];
+    list buttons = [];
+
+    if(gState == STATE_PLAYING)
+        buttons += [BTN_PAUSE, BTN_STOP];
+    else if(gState == STATE_PAUSED)
+        buttons += [BTN_CONTINUE, BTN_STOP];
+    else
+        buttons += [BTN_PLAY];
+
+    buttons += [BTN_SONGS, BTN_VOLUME, BTN_CLOSE];
+
+    string stateText = "Stopped";
+
+    if(gState == STATE_PLAYING)
+        stateText = "Playing";
+    else if(gState == STATE_PAUSED)
+        stateText = "Paused";
 
     string text =
-        "Max Modular Music Engine\n\n"
-        + "Now Playing\n\n"
+        "MMME\n\n"
+        + "Status: "
+        + stateText
+        + "\n\n"
+        + "Now Playing\n"
         + gSong;
 
     if(gArtist != "")
         text += "\n" + gArtist;
 
-    llDialog(
-        id,
-        text,
-        buttons,
-        gChannel);
+    llDialog(id, text, buttons, gChannel);
 }
-
-
-
-//==============================================================
-// VOLUME MENU
-//==============================================================
 
 ShowVolume(key id)
 {
     gMenu = MENU_VOLUME;
-
     OpenDialog(id);
-
-    list buttons =
-    [
-        "100%",
-        "80%",
-        "60%",
-        "40%",
-        "20%",
-        "Mute",
-        BTN_BACK
-    ];
 
     llDialog(
         id,
-        "Volume Control\n\n(Playback support coming soon)",
-        buttons,
+        "Volume Control\n\nVolume connection comes in a later build.",
+        ["100%", "80%", "60%", "40%", "20%", "Mute", BTN_BACK],
         gChannel);
 }
-
-
-
-//==============================================================
-// SONG BROWSER
-//==============================================================
 
 ShowSongs(key id)
 {
     gMenu = MENU_SONGS;
-
     OpenDialog(id);
-
-    //----------------------------------------------------------
-    // No cached songs?
-    //----------------------------------------------------------
 
     if(gSongCount == 0)
     {
         RequestSongList();
+        RequestSongCount();
 
         llDialog(
             id,
-            "The music library is loading.\n\nPlease open Songs again in a moment.",
+            "Building music library...\n\nOpen Songs again in a moment.",
             [BTN_BACK],
             gChannel);
 
         return;
     }
+
+    integer maxPage = (gSongCount - 1) / BUTTONS_PER_PAGE;
+
+    if(gSongPage < 0)
+        gSongPage = 0;
+
+    if(gSongPage > maxPage)
+        gSongPage = maxPage;
 
     integer start = gSongPage * BUTTONS_PER_PAGE;
     integer end = start + BUTTONS_PER_PAGE - 1;
@@ -279,68 +201,66 @@ ShowSongs(key id)
         end = gSongCount - 1;
 
     list buttons = [];
-
     integer i;
 
     for(i = start; i <= end; ++i)
-    {
-        buttons += [ SongTitle(i) ];
-    }
-
-    //----------------------------------------------------------
-    // Navigation
-    //----------------------------------------------------------
+        buttons += [SongTitle(i)];
 
     if(gSongPage > 0)
         buttons += [BTN_PREV];
 
-    if(end < (gSongCount - 1))
+    if(gSongPage < maxPage)
         buttons += [BTN_NEXT];
 
     buttons += [BTN_BACK];
 
-    string text =
-        "Songs\n\n"
-        + "Showing "
+    llDialog(
+        id,
+        "Songs\n\nShowing "
         + (string)(start + 1)
         + " - "
         + (string)(end + 1)
         + " of "
-        + (string)gSongCount;
-
-    llDialog(
-        id,
-        text,
+        + (string)gSongCount,
         buttons,
         gChannel);
 }
-//==============================================================
-// MAIN MENU HANDLER
-//==============================================================
+
+SendTransportCommand(integer command, key id)
+{
+    gActiveUser = id;
+    gRefreshMainOnState = TRUE;
+
+    llMessageLinked(
+        LINK_SET,
+        command,
+        "",
+        id);
+}
 
 HandleMainMenu(key id, string msg)
 {
     if(msg == BTN_PLAY)
     {
-        llMessageLinked(
-            LINK_SET,
-            API_ENGINE_PLAY,
-            "",
-            id);
+        SendTransportCommand(API_ENGINE_PLAY, id);
+        return;
+    }
 
-        ShowMain(id);
+    if(msg == BTN_PAUSE)
+    {
+        SendTransportCommand(API_ENGINE_PAUSE, id);
+        return;
+    }
+
+    if(msg == BTN_CONTINUE)
+    {
+        SendTransportCommand(API_ENGINE_RESUME, id);
         return;
     }
 
     if(msg == BTN_STOP)
     {
-        llMessageLinked(
-            LINK_SET,
-            API_ENGINE_STOP,
-            "",
-            id);
-
-        ShowMain(id);
+        SendTransportCommand(API_ENGINE_STOP, id);
         return;
     }
 
@@ -358,21 +278,10 @@ HandleMainMenu(key id, string msg)
 
     if(msg == BTN_CLOSE)
     {
-        if(gListen)
-        {
-            llListenRemove(gListen);
-            gListen = 0;
-        }
-
+        CloseDialog();
         return;
     }
 }
-
-
-
-//==============================================================
-// VOLUME MENU HANDLER
-//==============================================================
 
 HandleVolumeMenu(key id, string msg)
 {
@@ -382,36 +291,17 @@ HandleVolumeMenu(key id, string msg)
         return;
     }
 
-    //----------------------------------------------------------
-    // Placeholder for future playback volume support
-    //----------------------------------------------------------
-
-    llOwnerSay("[MMME] Volume selected: " + msg);
-
+    llOwnerSay("[MMME-IF] Volume selected: " + msg);
     ShowVolume(id);
 }
 
-
-
-//==============================================================
-// SONG MENU HANDLER
-//==============================================================
-
 HandleSongMenu(key id, string msg)
 {
-    //----------------------------------------------------------
-    // Back
-    //----------------------------------------------------------
-
     if(msg == BTN_BACK)
     {
         ShowMain(id);
         return;
     }
-
-    //----------------------------------------------------------
-    // Next Page
-    //----------------------------------------------------------
 
     if(msg == BTN_NEXT)
     {
@@ -419,10 +309,6 @@ HandleSongMenu(key id, string msg)
         ShowSongs(id);
         return;
     }
-
-    //----------------------------------------------------------
-    // Previous Page
-    //----------------------------------------------------------
 
     if(msg == BTN_PREV)
     {
@@ -433,23 +319,22 @@ HandleSongMenu(key id, string msg)
         return;
     }
 
-    //----------------------------------------------------------
-    // Song Selection
-    //----------------------------------------------------------
+    integer start = gSongPage * BUTTONS_PER_PAGE;
+    integer end = start + BUTTONS_PER_PAGE - 1;
+
+    if(end >= gSongCount)
+        end = gSongCount - 1;
 
     integer i;
 
-    for(i = 0; i < gSongCount; ++i)
+    for(i = start; i <= end; ++i)
     {
         if(msg == SongTitle(i))
         {
-            // Playback integration comes in
-            // MainEngine Developer Preview 2.
-
             llOwnerSay(
-                "[MMME] Selected Song "
+                "[MMME-IF] Selected Song "
                 + SongID(i)
-                + " : "
+                + ": "
                 + SongTitle(i));
 
             ShowMain(id);
@@ -457,196 +342,114 @@ HandleSongMenu(key id, string msg)
         }
     }
 
-    //----------------------------------------------------------
-    // Unknown selection
-    //----------------------------------------------------------
-
     ShowSongs(id);
 }
 
-
-
-//==============================================================
-// LISTEN DISPATCHER
-//==============================================================
-
-HandleListen(
-    key id,
-    string msg)
+HandleListen(key id, string msg)
 {
     if(gMenu == MENU_MAIN)
-    {
-        HandleMainMenu(id,msg);
-        return;
-    }
-
-    if(gMenu == MENU_VOLUME)
-    {
-        HandleVolumeMenu(id,msg);
-        return;
-    }
-
-    if(gMenu == MENU_SONGS)
-    {
-        HandleSongMenu(id,msg);
-        return;
-    }
+        HandleMainMenu(id, msg);
+    else if(gMenu == MENU_SONGS)
+        HandleSongMenu(id, msg);
+    else if(gMenu == MENU_VOLUME)
+        HandleVolumeMenu(id, msg);
 }
-//==============================================================
-// LIBRARY CACHE
-//==============================================================
 
 CacheSongList(string message)
 {
     gLibrary = [];
     gSongCount = 0;
+    gSongPage = 0;
 
-    //----------------------------------------------------------
-    // Remove "SONG_LIST|"
-    //----------------------------------------------------------
-
-    list records =
-        llParseStringKeepNulls(
-            message,
-            ["|"],
-            []);
-
+    list records = llParseStringKeepNulls(message, ["|"], []);
     integer i;
 
     for(i = 1; i < llGetListLength(records); ++i)
     {
-        string record =
-            llList2String(records,i);
-
         list fields =
             llParseStringKeepNulls(
-                record,
+                llList2String(records, i),
                 ["="],
                 []);
 
         if(llGetListLength(fields) >= 2)
         {
-            gLibrary +=
-            [
-                llList2String(fields,0),   // SongID
-                llList2String(fields,1)    // Title
-            ];
+            string songID = llList2String(fields, 0);
+            string title = llList2String(fields, 1);
 
-            ++gSongCount;
+            if(songID != "" && title != "")
+            {
+                gLibrary += [songID, title];
+                ++gSongCount;
+            }
         }
     }
 }
 
-
-
-//==============================================================
-// LINK MESSAGE HANDLER
-//==============================================================
-
-HandleLinkMessage(
-    integer num,
-    string message)
+HandleLinkMessage(integer num, string message)
 {
-    //----------------------------------------------------------
-    // Playback State
-    //----------------------------------------------------------
-
     if(num == API_IF_STATE)
     {
         gState = (integer)message;
-        return;
-    }
 
-    //----------------------------------------------------------
-    // Now Playing
-    //----------------------------------------------------------
-
-    if(num == API_IF_NOWPLAYING)
-    {
-        list p =
-            llParseStringKeepNulls(
-                message,
-                ["|"],
-                []);
-
-        if(llGetListLength(p) >= 2)
+        if(gRefreshMainOnState && gActiveUser != NULL_KEY)
         {
-            gSong =
-                llList2String(p,0);
-
-            gArtist =
-                llList2String(p,1);
+            gRefreshMainOnState = FALSE;
+            ShowMain(gActiveUser);
         }
 
         return;
     }
 
-    //----------------------------------------------------------
-    // Library Reply
-    //----------------------------------------------------------
+    if(num == API_IF_NOWPLAYING)
+    {
+        list p = llParseStringKeepNulls(message, ["|"], []);
+
+        if(llGetListLength(p) >= 2)
+        {
+            gSong = llList2String(p, 0);
+            gArtist = llList2String(p, 1);
+        }
+
+        return;
+    }
 
     if(num == API_DB_REPLY)
     {
-        if(llSubStringIndex(
-            message,
-            "SONG_LIST|") == 0)
+        if(llSubStringIndex(message, "SONG_LIST|") == 0)
         {
             CacheSongList(message);
             return;
         }
 
-        if(llSubStringIndex(
-            message,
-            "SONG_COUNT|") == 0)
+        if(llSubStringIndex(message, "SONG_COUNT|") == 0)
         {
-            gSongCount =
-                (integer)llGetSubString(
-                    message,
-                    11,
-                    -1);
+            integer reportedCount =
+                (integer)llGetSubString(message, 11, -1);
+
+            if(gSongCount == 0)
+                gSongCount = reportedCount;
 
             return;
         }
     }
 }
-//==============================================================
-// DEFAULT STATE
-//==============================================================
 
 default
 {
-    //----------------------------------------------------------
-    // STARTUP
-    //----------------------------------------------------------
-
     state_entry()
     {
-        gMenu = MENU_MAIN;
-        gSongPage = 0;
-
         RequestSongList();
         RequestSongCount();
     }
-
-
-    //----------------------------------------------------------
-    // OWNER TOUCH
-    //----------------------------------------------------------
 
     touch_start(integer total)
     {
         key id = llDetectedKey(0);
 
-        if(id != llGetOwner())
-            return;
-
-        ShowMain(id);
+        if(id == llGetOwner())
+            ShowMain(id);
     }
-
-
-    //----------------------------------------------------------
-    // DIALOG LISTENER
-    //----------------------------------------------------------
 
     listen(
         integer channel,
@@ -657,40 +460,27 @@ default
         HandleListen(id, message);
     }
 
-
-    //----------------------------------------------------------
-    // LINKED MESSAGE ROUTER
-    //----------------------------------------------------------
-
     link_message(
         integer sender,
         integer num,
         string message,
         key id)
     {
-        HandleLinkMessage(
-            num,
-            message);
+        HandleLinkMessage(num, message);
     }
-
-
-    //----------------------------------------------------------
-    // INVENTORY CHANGED
-    //----------------------------------------------------------
 
     changed(integer change)
     {
         if(change & CHANGED_INVENTORY)
         {
+            gLibrary = [];
+            gSongCount = 0;
+            gSongPage = 0;
+
             RequestSongList();
             RequestSongCount();
         }
     }
-
-
-    //----------------------------------------------------------
-    // RESET
-    //----------------------------------------------------------
 
     on_rez(integer start)
     {
